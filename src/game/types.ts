@@ -50,6 +50,14 @@ export const START_BITS = 5;
 export const ARENA_BIT_COUNT = 200;
 export const SCATTER_LIFETIME = 10;
 export const SPIKE_LENGTH_FACTOR = 0.4;
+export const SPEED_BITS_CAP = 100;
+export const SPEED_MAX_MULT = 3.0;
+
+export type GameMode = 'freeplay' | 'last-standing' | 'skull' | 'koth';
+
+export function speedMultiplier(bitCount: number): number {
+  return 1.0 + (SPEED_MAX_MULT - 1.0) * Math.min(bitCount / SPEED_BITS_CAP, 1);
+}
 
 export const PLAYER_COLORS: string[] = [
   '#FF4757', // red

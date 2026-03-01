@@ -5,6 +5,7 @@ import type { GameWorld } from '../game/world.ts';
 import type { AimState, Vec2 } from '../game/types.ts';
 import { WORLD_W, WORLD_H, SPIKE_LENGTH_FACTOR } from '../game/types.ts';
 import type { TouchRing } from '../engine/input.ts';
+import type { SerializedModeState } from '../game/modes/types.ts';
 
 // --- Effect state ---
 interface DeathEffect {
@@ -170,6 +171,7 @@ export function renderPlayer(
   camera: Camera,
   time: number,
   aimDir?: Vec2,
+  hideSpike?: boolean,
 ): void {
   if (!player.alive) return;
 
@@ -221,23 +223,25 @@ export function renderPlayer(
   ctx.fillStyle = gradient;
   ctx.fill();
 
-  // Spike (more prominent)
-  const spikeLen = r * SPIKE_LENGTH_FACTOR * 1.3;
-  const spikeBaseW = r * 0.45;
-  const rot = player.rotation;
-  ctx.save();
-  ctx.rotate(rot);
-  ctx.beginPath();
-  ctx.moveTo(r + spikeLen, 0);
-  ctx.lineTo(r - 4, spikeBaseW);
-  ctx.lineTo(r - 4, -spikeBaseW);
-  ctx.closePath();
-  ctx.fillStyle = player.color;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.restore();
+  // Spike (more prominent) — hidden for skull carrier
+  if (!hideSpike) {
+    const spikeLen = r * SPIKE_LENGTH_FACTOR * 1.3;
+    const spikeBaseW = r * 0.45;
+    const rot = player.rotation;
+    ctx.save();
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.moveTo(r + spikeLen, 0);
+    ctx.lineTo(r - 4, spikeBaseW);
+    ctx.lineTo(r - 4, -spikeBaseW);
+    ctx.closePath();
+    ctx.fillStyle = player.color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Body circle
   const bodyGrad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 0, 0, 0, r);
@@ -410,6 +414,11 @@ export function renderWorld(
   aimState: AimState,
 ): void {
   renderBackground(ctx, camera);
+
+  // Mode-specific world elements (draw before boundary so zone is visible)
+  const modeState = world.serializeModeState();
+  renderModeWorld(ctx, modeState, camera, time);
+
   renderWorldBoundary(ctx, camera);
 
   // Bits
@@ -423,7 +432,10 @@ export function renderWorld(
     activeIds.add(player.id);
     const isLocal = player.id === localPlayerId;
     const lookDir = isLocal && aimState.aiming ? aimState.direction : undefined;
-    renderPlayer(ctx, player, camera, time, lookDir);
+
+    // In skull mode, don't draw spike for carrier
+    const isSkullCarrier = modeState.mode === 'skull' && modeState.skullCarrierId === player.id;
+    renderPlayer(ctx, player, camera, time, lookDir, isSkullCarrier);
   }
   // Prune stale trails
   for (const id of playerTrails.keys()) {
@@ -438,6 +450,185 @@ export function renderWorld(
 
   // Effects
   renderEffects(ctx, camera);
+}
+
+export function renderClientModeElements(
+  ctx: CanvasRenderingContext2D,
+  modeState: SerializedModeState,
+  camera: Camera,
+  time: number,
+): void {
+  renderModeWorld(ctx, modeState, camera, time);
+}
+
+function renderModeWorld(
+  ctx: CanvasRenderingContext2D,
+  modeState: SerializedModeState,
+  camera: Camera,
+  time: number,
+): void {
+  if (modeState.mode === 'last-standing' && modeState.zoneCenterX !== undefined && modeState.zoneRadius !== undefined) {
+    renderZone(ctx, modeState, camera);
+  }
+
+  if (modeState.mode === 'skull' && modeState.skullX !== undefined && modeState.skullY !== undefined) {
+    renderSkull(ctx, modeState, camera, time);
+  }
+
+  if (modeState.mode === 'koth' && modeState.hillCenterX !== undefined && modeState.hillCenterY !== undefined) {
+    renderHill(ctx, modeState, camera, time);
+  }
+}
+
+function renderZone(
+  ctx: CanvasRenderingContext2D,
+  modeState: SerializedModeState,
+  camera: Camera,
+): void {
+  const cx = modeState.zoneCenterX!;
+  const cy = modeState.zoneCenterY!;
+  const radius = modeState.zoneRadius!;
+  const s = camera.worldToScreen(cx, cy);
+
+  // Draw the danger zone (outside the safe circle) as a red tint
+  // First draw a full-screen red overlay, then cut out the safe circle
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 0, 0, 0.08)';
+  ctx.fillRect(0, 0, camera.screenW, camera.screenH);
+
+  // Clear the safe zone
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+
+  // Safe zone border
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = modeState.warning ? 'rgba(255, 165, 0, 0.7)' : 'rgba(255, 80, 80, 0.4)';
+  ctx.lineWidth = modeState.warning ? 3 : 2;
+  ctx.setLineDash([8, 4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function renderSkull(
+  ctx: CanvasRenderingContext2D,
+  modeState: SerializedModeState,
+  camera: Camera,
+  time: number,
+): void {
+  // Don't draw skull on ground if someone is carrying it
+  if (modeState.skullCarrierId) {
+    // Draw golden aura around carrier (handled via player glow — draw skull icon above carrier position)
+    const s = camera.worldToScreen(modeState.skullX!, modeState.skullY!);
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = '20px sans-serif';
+    ctx.fillText('👑', s.x, s.y - 30);
+
+    // Golden aura
+    const auraR = 25 + Math.sin(time * 4) * 5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, auraR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // Skull on ground
+  const s = camera.worldToScreen(modeState.skullX!, modeState.skullY!);
+  const pulse = 1 + Math.sin(time * 3) * 0.15;
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(pulse, pulse);
+
+  // Glow
+  const gradient = ctx.createRadialGradient(0, 0, 5, 0, 0, 30);
+  gradient.addColorStop(0, 'rgba(255, 215, 0, 0.5)');
+  gradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // Skull emoji
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '24px sans-serif';
+  ctx.fillText('💀', 0, 0);
+
+  ctx.restore();
+}
+
+function renderHill(
+  ctx: CanvasRenderingContext2D,
+  modeState: SerializedModeState,
+  camera: Camera,
+  time: number,
+): void {
+  const cx = modeState.hillCenterX!;
+  const cy = modeState.hillCenterY!;
+  const radius = modeState.hillRadius ?? 150;
+  const s = camera.worldToScreen(cx, cy);
+
+  // Hill zone fill
+  let fillColor = 'rgba(255, 255, 255, 0.05)';
+  let strokeColor = 'rgba(255, 255, 255, 0.3)';
+
+  if (modeState.contested) {
+    const flash = Math.sin(time * 8) > 0;
+    fillColor = flash ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
+    strokeColor = 'rgba(255, 255, 255, 0.5)';
+  } else if (modeState.controllingTeam === 'red') {
+    fillColor = 'rgba(255, 71, 87, 0.1)';
+    strokeColor = 'rgba(255, 71, 87, 0.5)';
+  } else if (modeState.controllingTeam === 'blue') {
+    fillColor = 'rgba(30, 144, 255, 0.1)';
+    strokeColor = 'rgba(30, 144, 255, 0.5)';
+  }
+
+  ctx.save();
+
+  // Fill
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+
+  // Border
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Pulsing inner ring
+  const innerR = radius * 0.3 + Math.sin(time * 2) * 10;
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, innerR, 0, Math.PI * 2);
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // "HILL" label
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillText('HILL', s.x, s.y);
+
+  ctx.restore();
 }
 
 function lightenColor(hex: string, amount: number): string {

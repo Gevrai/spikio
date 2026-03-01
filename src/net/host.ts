@@ -1,5 +1,6 @@
 import { GameWorld } from '../game/world.ts';
 import { WORLD_W, WORLD_H, PLAYER_COLORS, vec2Dist, vec2Norm, vec2Sub } from '../game/types.ts';
+import type { GameMode } from '../game/types.ts';
 import type { Player } from '../game/player.ts';
 import type { Bit } from '../game/bits.ts';
 import type {
@@ -29,6 +30,7 @@ export class GameHost {
   world: GameWorld;
   roomCode: string;
   lanIPs: string[] = [];
+  gameMode: GameMode;
 
   private ws: WebSocket | null = null;
   private remotePlayers = new Map<string, RemotePlayer>();
@@ -44,9 +46,10 @@ export class GameHost {
   onConnected: (() => void) | null = null;
   onError: ((msg: string) => void) | null = null;
 
-  constructor(hostName: string) {
+  constructor(hostName: string, gameMode: GameMode = 'freeplay') {
     this.roomCode = generateRoomCode();
-    this.world = new GameWorld();
+    this.gameMode = gameMode;
+    this.world = new GameWorld(gameMode);
     this.hostPlayerId = 'host-' + hostName;
     this.hostPlayer = this.world.addPlayer(this.hostPlayerId);
 
@@ -151,6 +154,7 @@ export class GameHost {
       playerId,
       worldW: WORLD_W,
       worldH: WORLD_H,
+      mode: this.gameMode,
     };
     this.sendToClient(clientId, welcome);
 
@@ -233,6 +237,8 @@ export class GameHost {
 
   private updateBotAI(dt: number): void {
     const allPlayers = [...this.world.players.values()];
+    const modeState = this.world.serializeModeState();
+
     for (const [name, state] of this.botStates) {
       const bot = this.world.players.get(name);
       if (!bot || !bot.alive) continue;
@@ -241,14 +247,48 @@ export class GameHost {
       if (state.aimTimer <= 0) {
         let target: { x: number; y: number } | null = null;
 
-        // Try targeting nearest enemy
         const enemy = this.findNearest(bot, allPlayers);
         const bit = this.findNearestBit(bot, this.world.bitsManager.bits);
 
-        if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
-          target = { x: enemy.position.x, y: enemy.position.y };
-        } else if (bit) {
-          target = { x: bit.position.x, y: bit.position.y };
+        if (modeState.mode === 'last-standing') {
+          const cx = modeState.zoneCenterX ?? WORLD_W / 2;
+          const cy = modeState.zoneCenterY ?? WORLD_H / 2;
+          const dx = bot.position.x - cx;
+          const dy = bot.position.y - cy;
+          const distToCenter = Math.sqrt(dx * dx + dy * dy);
+          const zoneR = modeState.zoneRadius ?? 1000;
+          if (distToCenter > zoneR * 0.7) {
+            target = { x: cx, y: cy };
+          } else if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
+            target = { x: enemy.position.x, y: enemy.position.y };
+          } else if (bit) {
+            target = { x: bit.position.x, y: bit.position.y };
+          }
+        } else if (modeState.mode === 'skull') {
+          const isCarrier = modeState.skullCarrierId === bot.id;
+          if (isCarrier && enemy) {
+            target = {
+              x: bot.position.x - (enemy.position.x - bot.position.x),
+              y: bot.position.y - (enemy.position.y - bot.position.y),
+            };
+          } else if (modeState.skullX !== undefined && modeState.skullY !== undefined) {
+            target = { x: modeState.skullX, y: modeState.skullY };
+          }
+        } else if (modeState.mode === 'koth') {
+          const hx = modeState.hillCenterX ?? WORLD_W / 2;
+          const hy = modeState.hillCenterY ?? WORLD_H / 2;
+          const distToHill = vec2Dist(bot.position, { x: hx, y: hy });
+          if (distToHill > (modeState.hillRadius ?? 150)) {
+            target = { x: hx, y: hy };
+          } else if (enemy && vec2Dist(bot.position, enemy.position) < 200 && Math.random() < 0.7) {
+            target = { x: enemy.position.x, y: enemy.position.y };
+          }
+        } else {
+          if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
+            target = { x: enemy.position.x, y: enemy.position.y };
+          } else if (bit) {
+            target = { x: bit.position.x, y: bit.position.y };
+          }
         }
 
         if (target) {
@@ -326,6 +366,7 @@ export class GameHost {
       type: 'state',
       players: this.serializePlayers(),
       bits: this.serializeBits(),
+      modeState: this.world.serializeModeState(),
     };
     this.broadcast(msg);
   }

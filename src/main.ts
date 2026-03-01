@@ -2,7 +2,7 @@ import { GameLoop } from './engine/game-loop.ts';
 import { CanvasManager } from './engine/canvas.ts';
 import { InputManager } from './engine/input.ts';
 import { GameWorld } from './game/world.ts';
-import { renderWorld, renderBackground, renderWorldBoundary, renderPlayer, renderAimIndicator, renderEffects, renderTouchFeedback, addDeathEffect, addSpawnEffect, updateEffects } from './ui/renderer.ts';
+import { renderWorld, renderBackground, renderWorldBoundary, renderPlayer, renderAimIndicator, renderEffects, renderTouchFeedback, addDeathEffect, addSpawnEffect, updateEffects, renderClientModeElements } from './ui/renderer.ts';
 import { renderHUD } from './ui/hud.ts';
 import { SoundManager } from './audio/sounds.ts';
 import { vec2Dist, vec2Norm, vec2Sub } from './game/types.ts';
@@ -56,8 +56,34 @@ function handleMenuClick(x: number, y: number): void {
   if (!action) return;
 
   switch (action) {
-    case 'solo': startSolo(); break;
-    case 'host': showHostScreen(); break;
+    case 'solo-modes':
+      menuState.playContext = 'solo';
+      menuState.screen = 'mode-select';
+      break;
+    case 'host-modes':
+      menuState.playContext = 'host';
+      menuState.screen = 'mode-select';
+      break;
+    case 'mode-freeplay':
+      menuState.selectedMode = 'freeplay';
+      if (menuState.playContext === 'solo') startSolo();
+      else showHostScreen();
+      break;
+    case 'mode-last-standing':
+      menuState.selectedMode = 'last-standing';
+      if (menuState.playContext === 'solo') startSolo();
+      else showHostScreen();
+      break;
+    case 'mode-skull':
+      menuState.selectedMode = 'skull';
+      if (menuState.playContext === 'solo') startSolo();
+      else showHostScreen();
+      break;
+    case 'mode-koth':
+      menuState.selectedMode = 'koth';
+      if (menuState.playContext === 'solo') startSolo();
+      else showHostScreen();
+      break;
     case 'join': showJoinScreen(); break;
     case 'start-host': startHostGame(); break;
     case 'connect': connectToHost(); break;
@@ -68,7 +94,7 @@ function handleMenuClick(x: number, y: number): void {
 function showHostScreen(): void {
   menuState.screen = 'host';
   const hostName = 'Host';
-  gameHost = new GameHost(hostName);
+  gameHost = new GameHost(hostName, menuState.selectedMode);
   menuState.roomCode = gameHost.roomCode;
   menuState.playerList = gameHost.playerList;
 
@@ -116,7 +142,7 @@ function startSolo(): void {
   mode = 'solo';
   gameTime = 0;
   input = new InputManager(canvasEl);
-  soloWorld = new GameWorld();
+  soloWorld = new GameWorld(menuState.selectedMode);
   soloLocalPlayer = soloWorld.addPlayer('You');
 
   soloBotStates.clear();
@@ -221,6 +247,8 @@ function findNearestEnemy(player: Player, players: Player[]): Player | null {
 function updateSoloBotAI(dt: number): void {
   if (!soloWorld) return;
   const allPlayers = [...soloWorld.players.values()];
+  const modeState = soloWorld.serializeModeState();
+
   for (const name of soloBotNames) {
     const bot = soloWorld.players.get(name);
     if (!bot || !bot.alive) continue;
@@ -230,11 +258,59 @@ function updateSoloBotAI(dt: number): void {
       const enemy = findNearestEnemy(bot, allPlayers);
       const bit = findNearestBit(bot, soloWorld.bitsManager.bits);
       let target: { x: number; y: number } | null = null;
-      if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
-        target = { x: enemy.position.x, y: enemy.position.y };
-      } else if (bit) {
-        target = { x: bit.position.x, y: bit.position.y };
+
+      if (modeState.mode === 'last-standing') {
+        // Prioritize moving toward zone center if outside
+        const cx = modeState.zoneCenterX ?? 1000;
+        const cy = modeState.zoneCenterY ?? 1000;
+        const dx = bot.position.x - cx;
+        const dy = bot.position.y - cy;
+        const distToCenter = Math.sqrt(dx * dx + dy * dy);
+        const zoneR = modeState.zoneRadius ?? 1000;
+        if (distToCenter > zoneR * 0.7) {
+          target = { x: cx, y: cy };
+        } else if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
+          target = { x: enemy.position.x, y: enemy.position.y };
+        } else if (bit) {
+          target = { x: bit.position.x, y: bit.position.y };
+        }
+      } else if (modeState.mode === 'skull') {
+        // Chase skull if not carrier; flee if carrier
+        const isCarrier = modeState.skullCarrierId === bot.id;
+        if (isCarrier) {
+          // Flee from nearest enemy
+          if (enemy) {
+            const fleeX = bot.position.x - (enemy.position.x - bot.position.x);
+            const fleeY = bot.position.y - (enemy.position.y - bot.position.y);
+            target = { x: fleeX, y: fleeY };
+          }
+        } else {
+          // Go to skull
+          if (modeState.skullX !== undefined && modeState.skullY !== undefined) {
+            target = { x: modeState.skullX, y: modeState.skullY };
+          }
+        }
+      } else if (modeState.mode === 'koth') {
+        // Move toward hill
+        const hx = modeState.hillCenterX ?? 1000;
+        const hy = modeState.hillCenterY ?? 1000;
+        const distToHill = vec2Dist(bot.position, { x: hx, y: hy });
+
+        if (distToHill > (modeState.hillRadius ?? 150)) {
+          target = { x: hx, y: hy };
+        } else if (enemy && vec2Dist(bot.position, enemy.position) < 200 && Math.random() < 0.7) {
+          // Fight enemies in the hill
+          target = { x: enemy.position.x, y: enemy.position.y };
+        }
+      } else {
+        // Free play behavior
+        if (enemy && vec2Dist(bot.position, enemy.position) < 250 && Math.random() < 0.6) {
+          target = { x: enemy.position.x, y: enemy.position.y };
+        } else if (bit) {
+          target = { x: bit.position.x, y: bit.position.y };
+        }
       }
+
       if (target) {
         const dir = vec2Norm(vec2Sub(target, bot.position));
         bot.launch(dir.x, dir.y, 0.4 + Math.random() * 0.6);
@@ -288,6 +364,19 @@ function update(dt: number): void {
 
   if (mode === 'solo') {
     if (!soloWorld || !soloLocalPlayer || !input) return;
+
+    // Check if mode finished — return to menu on tap
+    if (soloWorld.modeManager.state.finished) {
+      const launch = input.consumeLaunch();
+      if (launch) {
+        returnToMenu();
+        return;
+      }
+      soloWorld.update(dt); // Keep updating for effects
+      trackSounds(soloWorld.players.values(), 'You');
+      return;
+    }
+
     const launch = input.consumeLaunch();
     if (launch && soloLocalPlayer.alive) {
       soloLocalPlayer.launch(launch.direction.x, launch.direction.y, launch.power);
@@ -386,6 +475,13 @@ function renderClientWorld(
   aimState: AimState,
 ): void {
   renderBackground(ctx, camera);
+
+  // Mode-specific world elements
+  const modeState = client.modeState;
+  if (modeState) {
+    renderClientModeElements(ctx, modeState, camera, time);
+  }
+
   renderWorldBoundary(ctx, camera);
 
   // Bits
@@ -424,7 +520,8 @@ function renderClientWorld(
 
     const isLocal = p.id === localId;
     const lookDir = isLocal && aimState.aiming ? aimState.direction : undefined;
-    renderPlayer(ctx, fakePlayer, camera, time, lookDir);
+    const isSkullCarrier = modeState?.mode === 'skull' && modeState.skullCarrierId === p.id;
+    renderPlayer(ctx, fakePlayer, camera, time, lookDir, isSkullCarrier);
 
     if (isLocal) {
       renderAimIndicator(ctx, fakePlayer, aimState, camera);
@@ -442,6 +539,63 @@ function renderClientHUD(
   screenH: number,
 ): void {
   const local = client.getLocalPlayer();
+  const modeState = client.modeState;
+
+  // Mode-specific HUD elements (timer, scores, etc.)
+  if (modeState && modeState.mode !== 'freeplay') {
+    ctx.save();
+    const totalSec = Math.floor(modeState.timer);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${min}:${sec.toString().padStart(2, '0')}`, 16, 16);
+
+    if (modeState.mode === 'koth') {
+      const redScore = Math.floor(modeState.teamScoresRed ?? 0);
+      const blueScore = Math.floor(modeState.teamScoresBlue ?? 0);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillStyle = '#FF4757';
+      ctx.fillText(`${redScore}`, screenW / 2 - 50, 76);
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('vs', screenW / 2, 80);
+      ctx.fillStyle = '#1E90FF';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`${blueScore}`, screenW / 2 + 50, 76);
+    }
+
+    if (modeState.mode === 'last-standing' && modeState.warning) {
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 20px sans-serif';
+      const flash = Math.sin(Date.now() * 0.01) > 0;
+      ctx.fillStyle = flash ? '#FF4757' : '#FFA502';
+      ctx.fillText('⚠ ZONE SHRINKING', screenW / 2, screenH * 0.15);
+    }
+
+    // Winner overlay
+    if (modeState.finished) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(0, 0, screenW, screenH);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      let winText = '';
+      if (modeState.mode === 'koth') {
+        winText = `${(modeState.winnerTeam ?? 'RED').toUpperCase()} TEAM WINS!`;
+      } else {
+        const isLocalWin = modeState.winnerId === client.playerId;
+        winText = isLocalWin ? 'YOU WIN!' : `${modeState.winnerId ?? 'Unknown'} WINS!`;
+      }
+      ctx.font = `bold ${Math.min(48, screenW * 0.1)}px sans-serif`;
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(winText, screenW / 2, screenH * 0.4);
+    }
+
+    ctx.restore();
+  }
 
   // Score (larger for mobile)
   ctx.save();

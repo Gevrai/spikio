@@ -2,7 +2,7 @@ import type { Vec2 } from './types.ts';
 import {
   WORLD_W, WORLD_H,
   FRICTION, MAX_SPEED, INVULN_DURATION, START_BITS,
-  PLAYER_COLORS, playerRadius, vec2Len,
+  PLAYER_COLORS, playerRadius, vec2Len, speedMultiplier,
 } from './types.ts';
 
 let nextColor = 0;
@@ -18,6 +18,8 @@ export class Player {
   invulnerableTimer = 0;
   respawnTimer = 0;
   color: string;
+  modeSpeedCap: number | null = null;
+  canRespawn = true;
 
   constructor(id: string, position?: Vec2) {
     this.id = id;
@@ -34,7 +36,7 @@ export class Player {
   update(dt: number): void {
     if (!this.alive) {
       this.respawnTimer -= dt;
-      if (this.respawnTimer <= 0) {
+      if (this.respawnTimer <= 0 && this.canRespawn) {
         this.respawn();
       }
       return;
@@ -49,10 +51,15 @@ export class Player {
     this.velocity.x *= FRICTION;
     this.velocity.y *= FRICTION;
 
-    // Clamp speed
+    // Clamp speed (scaled by bit count)
     const speed = vec2Len(this.velocity);
-    if (speed > MAX_SPEED) {
-      const ratio = MAX_SPEED / speed;
+    let spdMult = this.speedMultiplier;
+    if (this.modeSpeedCap !== null) {
+      spdMult = Math.min(spdMult, this.modeSpeedCap);
+    }
+    const maxSpd = MAX_SPEED * spdMult;
+    if (speed > maxSpd) {
+      const ratio = maxSpd / speed;
       this.velocity.x *= ratio;
       this.velocity.y *= ratio;
     }
@@ -96,9 +103,13 @@ export class Player {
     }
   }
 
+  get speedMultiplier(): number {
+    return speedMultiplier(this.bitCount);
+  }
+
   launch(dirX: number, dirY: number, power: number): void {
     if (!this.alive) return;
-    const launchSpeed = 200 + power * 400;
+    const launchSpeed = (200 + power * 400) * this.speedMultiplier;
     this.velocity.x = dirX * launchSpeed;
     this.velocity.y = dirY * launchSpeed;
     this.rotation = Math.atan2(dirY, dirX);

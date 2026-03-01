@@ -1,7 +1,9 @@
 import { PLAYER_COLORS, WORLD_W, WORLD_H } from '../game/types.ts';
+import type { GameMode } from '../game/types.ts';
 import type { AimState } from '../game/types.ts';
 import type { SerializedPlayer, SerializedBit, ServerMessage } from './protocol.ts';
 import type { ClientMessage } from './protocol.ts';
+import type { SerializedModeState } from '../game/modes/types.ts';
 
 interface InterpolatedPlayer {
   id: string;
@@ -41,6 +43,8 @@ export class GameClient {
   private _worldH = WORLD_H;
   private _connected = false;
   private _welcomed = false;
+  private _gameMode: GameMode = 'freeplay';
+  private _modeState: SerializedModeState | null = null;
 
   // State interpolation
   private currentPlayers: InterpolatedPlayer[] = [];
@@ -65,6 +69,8 @@ export class GameClient {
   get worldH(): number { return this._worldH; }
   get connected(): boolean { return this._connected; }
   get welcomed(): boolean { return this._welcomed; }
+  get gameMode(): GameMode { return this._gameMode; }
+  get modeState(): SerializedModeState | null { return this._modeState; }
 
   connect(wsUrl: string, roomCode: string, playerName: string): void {
     const url = `${wsUrl}?role=client&room=${roomCode.toUpperCase()}`;
@@ -104,6 +110,7 @@ export class GameClient {
         this._playerId = w.playerId;
         this._worldW = w.worldW;
         this._worldH = w.worldH;
+        this._gameMode = w.mode;
         this._welcomed = true;
         this.onWelcome?.();
         break;
@@ -112,6 +119,7 @@ export class GameClient {
         if (msg.type !== 'state') break;
         const s = msg as ServerMessage & { type: 'state' };
         this.applyState(s.players, s.bits);
+        this._modeState = s.modeState;
         break;
       }
     }

@@ -1,3 +1,6 @@
+import type { SerializedModeState } from '../game/modes/types.ts';
+import type { GameMode } from '../game/types.ts';
+
 // Client → Host
 export type ClientMessage =
   | { type: 'input'; aim: { aiming: boolean; angle: number; power: number } | null; launch: boolean; _clientId?: string }
@@ -5,8 +8,8 @@ export type ClientMessage =
 
 // Host → Client
 export type ServerMessage =
-  | { type: 'state'; players: SerializedPlayer[]; bits: SerializedBit[] }
-  | { type: 'welcome'; playerId: string; worldW: number; worldH: number }
+  | { type: 'state'; players: SerializedPlayer[]; bits: SerializedBit[]; modeState: SerializedModeState }
+  | { type: 'welcome'; playerId: string; worldW: number; worldH: number; mode: GameMode }
   | { type: 'player-joined'; id: string; name: string }
   | { type: 'player-left'; id: string };
 

@@ -1,4 +1,8 @@
-export type MenuScreen = 'main' | 'host' | 'join' | 'none';
+export type MenuScreen = 'main' | 'mode-select' | 'host' | 'join' | 'none';
+
+export type PlayContext = 'solo' | 'host';
+
+import type { GameMode } from '../game/types.ts';
 
 export interface MenuButton {
   label: string;
@@ -20,6 +24,9 @@ export interface MenuState {
   joinStatus: string;
   // Shared
   animTime: number;
+  // Mode selection
+  selectedMode: GameMode;
+  playContext: PlayContext;
 }
 
 export function createMenuState(): MenuState {
@@ -30,6 +37,8 @@ export function createMenuState(): MenuState {
     playerList: [],
     joinStatus: '',
     animTime: 0,
+    selectedMode: 'freeplay',
+    playContext: 'solo',
   };
 }
 
@@ -130,9 +139,21 @@ export function getMenuButtons(screen: MenuScreen, screenW: number, screenH: num
   if (screen === 'main') {
     const startY = screenH * 0.5;
     return [
-      { label: 'Play Solo', x: cx - btnW / 2, y: startY, w: btnW, h: btnH, color: '#2ED573', action: 'solo' },
-      { label: 'Host Game', x: cx - btnW / 2, y: startY + btnH + 16, w: btnW, h: btnH, color: '#1E90FF', action: 'host' },
+      { label: 'Play Solo', x: cx - btnW / 2, y: startY, w: btnW, h: btnH, color: '#2ED573', action: 'solo-modes' },
+      { label: 'Host Game', x: cx - btnW / 2, y: startY + btnH + 16, w: btnW, h: btnH, color: '#1E90FF', action: 'host-modes' },
       { label: 'Join Game', x: cx - btnW / 2, y: startY + (btnH + 16) * 2, w: btnW, h: btnH, color: '#FFA502', action: 'join' },
+    ];
+  }
+
+  if (screen === 'mode-select') {
+    const startY = screenH * 0.32;
+    const smallH = 50;
+    return [
+      { label: '⚔ Free Play', x: cx - btnW / 2, y: startY, w: btnW, h: smallH, color: '#2ED573', action: 'mode-freeplay' },
+      { label: '💀 Last Standing', x: cx - btnW / 2, y: startY + (smallH + 12), w: btnW, h: smallH, color: '#FF4757', action: 'mode-last-standing' },
+      { label: '👑 Skull Keeper', x: cx - btnW / 2, y: startY + (smallH + 12) * 2, w: btnW, h: smallH, color: '#FFA502', action: 'mode-skull' },
+      { label: '🏔 King of the Hill', x: cx - btnW / 2, y: startY + (smallH + 12) * 3, w: btnW, h: smallH, color: '#1E90FF', action: 'mode-koth' },
+      { label: '← Back', x: cx - btnW / 2, y: startY + (smallH + 12) * 4 + 8, w: btnW, h: 44, color: '#555', action: 'back' },
     ];
   }
 
@@ -179,6 +200,8 @@ export function renderMenu(
 
   if (state.screen === 'main') {
     renderMainMenu(ctx, state, screenW, screenH);
+  } else if (state.screen === 'mode-select') {
+    renderModeSelectScreen(ctx, state, screenW, screenH);
   } else if (state.screen === 'host') {
     renderHostScreen(ctx, state, screenW, screenH);
   } else if (state.screen === 'join') {
@@ -230,6 +253,33 @@ function renderMainMenu(ctx: CanvasRenderingContext2D, state: MenuState, screenW
 
   // Buttons
   const buttons = getMenuButtons('main', screenW, screenH);
+  for (const btn of buttons) {
+    renderButton(ctx, btn);
+  }
+}
+
+function renderModeSelectScreen(ctx: CanvasRenderingContext2D, state: MenuState, screenW: number, screenH: number): void {
+  const cx = screenW / 2;
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Header
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = `bold ${Math.min(18, screenW * 0.045)}px sans-serif`;
+  const contextLabel = state.playContext === 'solo' ? 'SOLO' : 'HOST';
+  ctx.fillText(`SELECT MODE — ${contextLabel}`, cx, screenH * 0.12);
+
+  // Mode descriptions
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.font = `${Math.min(13, screenW * 0.032)}px sans-serif`;
+  ctx.fillText('Choose a game mode to play', cx, screenH * 0.20);
+
+  ctx.restore();
+
+  // Buttons
+  const buttons = getMenuButtons('mode-select', screenW, screenH);
   for (const btn of buttons) {
     renderButton(ctx, btn);
   }

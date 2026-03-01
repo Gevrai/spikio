@@ -19,7 +19,7 @@ export class InputManager {
   private launched = false;
   private launchDir: Vec2 = { x: 0, y: 0 };
   private launchPower = 0;
-  private boundHandlers: { type: string; handler: EventListener; options?: AddEventListenerOptions }[] = [];
+  private boundHandlers: { type: string; handler: EventListener; options?: AddEventListenerOptions; target: EventTarget }[] = [];
   touchRings: TouchRing[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
@@ -27,15 +27,16 @@ export class InputManager {
     this.bindEvents();
   }
 
-  private addListener(type: string, handler: EventListener, options?: AddEventListenerOptions): void {
-    this.canvas.addEventListener(type, handler, options);
-    this.boundHandlers.push({ type, handler, options });
+  private addListener(type: string, handler: EventListener, options?: AddEventListenerOptions, target?: EventTarget): void {
+    const el = target ?? this.canvas;
+    el.addEventListener(type, handler, options);
+    this.boundHandlers.push({ type, handler, options, target: el });
   }
 
   private bindEvents(): void {
-    this.addListener('mousedown', ((e: MouseEvent) => this.onStart(e.clientX, e.clientY)) as EventListener);
-    this.addListener('mousemove', ((e: MouseEvent) => this.onMove(e.clientX, e.clientY)) as EventListener);
-    this.addListener('mouseup', (() => this.onEnd()) as EventListener);
+    this.addListener('mousedown', ((e: MouseEvent) => { e.preventDefault(); this.onStart(e.clientX, e.clientY); }) as EventListener);
+    this.addListener('mousemove', ((e: MouseEvent) => this.onMove(e.clientX, e.clientY)) as EventListener, undefined, window);
+    this.addListener('mouseup', (() => this.onEnd()) as EventListener, undefined, window);
 
     this.addListener('touchstart', ((e: TouchEvent) => {
       e.preventDefault();
@@ -56,8 +57,8 @@ export class InputManager {
   }
 
   destroy(): void {
-    for (const { type, handler, options } of this.boundHandlers) {
-      this.canvas.removeEventListener(type, handler, options);
+    for (const { type, handler, options, target } of this.boundHandlers) {
+      target.removeEventListener(type, handler, options);
     }
     this.boundHandlers = [];
   }

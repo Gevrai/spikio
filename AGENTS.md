@@ -52,6 +52,9 @@ npm run build      # Production build
 - Room codes are 4-character alphanumeric strings.
 - For LAN play, all devices must be on the same network. The host screen shows the LAN IP and room code.
 
+## Validation
+- **Always run `npm run build` after making changes** to verify there are no TypeScript or build errors before considering work complete.
+
 ## Important Notes
 - Canvas scales to device pixel ratio for crisp rendering
 - Touch input is the primary control method

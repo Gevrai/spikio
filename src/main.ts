@@ -519,13 +519,13 @@ function onMenuPointerDown(e: MouseEvent | TouchEvent): void {
   if (mode !== 'menu') return;
 
   let x: number, y: number;
-  if (e instanceof TouchEvent) {
+  if (typeof TouchEvent !== 'undefined' && e instanceof TouchEvent) {
     if (e.touches.length === 0) return;
     x = e.touches[0].clientX;
     y = e.touches[0].clientY;
   } else {
-    x = e.clientX;
-    y = e.clientY;
+    x = (e as MouseEvent).clientX;
+    y = (e as MouseEvent).clientY;
   }
 
   handleMenuClick(x, y);

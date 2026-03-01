@@ -1,6 +1,6 @@
 import type { Player } from './player.ts';
 import type { BitsManager } from './bits.ts';
-import { vec2Sub, vec2Norm, vec2Scale, vec2Add, INVULN_DURATION } from './types.ts';
+import { vec2Sub, vec2Norm, vec2Scale, vec2Add, vec2Len, INVULN_DURATION, MAX_SPEED } from './types.ts';
 import { spikeHitTest, circleCollision, resolveCircleCollision } from './physics.ts';
 
 export function processCombat(players: Player[], bitsManager: BitsManager): void {
@@ -30,11 +30,25 @@ export function processCombat(players: Player[], bitsManager: BitsManager): void
 }
 
 function handleSpikeHit(attacker: Player, victim: Player, bitsManager: BitsManager): void {
-  const bitsLost = Math.max(10, Math.floor(victim.bitCount * 0.5));
+  // If victim has fewer than 10 bits, they explode
+  if (victim.bitCount < 10) {
+    bitsManager.scatterBits(victim.position, victim.bitCount);
+    victim.bitCount = 0;
+    victim.kill();
+    return;
+  }
+
+  // Force factor: 0 (barely moving) to 1 (max speed)
+  const speed = vec2Len(attacker.velocity);
+  const forceFactor = Math.min(speed / MAX_SPEED, 1);
+
+  // Loss percentage: 25% at minimum force, 75% at max force
+  const lossPercent = 0.25 + forceFactor * 0.50;
+  const bitsLost = Math.max(10, Math.floor(victim.bitCount * lossPercent));
   const actualLoss = Math.min(bitsLost, victim.bitCount);
   victim.bitCount -= actualLoss;
 
-  // Scatter bits
+  // Scatter bits outward (Sonic-style ring loss)
   bitsManager.scatterBits(victim.position, actualLoss);
 
   // Bounce apart

@@ -71,7 +71,7 @@ export class BitsManager {
       const bit = this.bits[i];
       let eaten = false;
       for (const player of players) {
-        if (!player.alive) continue;
+        if (!player.alive || player.isInvulnerable) continue;
         const dx = player.position.x - bit.position.x;
         const dy = player.position.y - bit.position.y;
         const r = player.radius + 6;

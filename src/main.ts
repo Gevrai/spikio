@@ -103,22 +103,10 @@ function showHostScreen(): void {
   };
 
   gameHost.onConnected = () => {
-    menuState.lanIPs = gameHost!.lanIPs;
     menuState.playerList = gameHost!.playerList;
   };
 
-  // Connect to local WS server
-  const wsUrl = `ws://${window.location.hostname || 'localhost'}:3001`;
-  gameHost.connect(wsUrl);
-
-  // Poll for IPs (arrive via room-created message shortly after connect)
-  const pollIPs = setInterval(() => {
-    if (!gameHost) { clearInterval(pollIPs); return; }
-    if (gameHost.lanIPs.length > 0) {
-      menuState.lanIPs = gameHost.lanIPs;
-      clearInterval(pollIPs);
-    }
-  }, 200);
+  gameHost.connect();
 }
 
 function showJoinScreen(): void {
@@ -133,7 +121,6 @@ function goBackToMain(): void {
   hideJoinInputs();
   menuState.screen = 'main';
   menuState.roomCode = '';
-  menuState.lanIPs = [];
   menuState.playerList = [];
   menuState.joinStatus = '';
 }
@@ -175,6 +162,7 @@ function connectToHost(): void {
     return;
   }
 
+  if (gameClient) { gameClient.disconnect(); gameClient = null; }
   menuState.joinStatus = 'Connecting...';
   gameClient = new GameClient();
 
@@ -206,8 +194,7 @@ function connectToHost(): void {
     menuState.joinStatus = `Error: ${msg}`;
   };
 
-  const wsUrl = `ws://${vals.ip}:3001`;
-  gameClient.connect(wsUrl, vals.room, vals.name);
+  gameClient.connect(vals.room, vals.name);
 }
 
 function returnToMenu(): void {

@@ -18,7 +18,6 @@ export interface MenuState {
   screen: MenuScreen;
   // Host screen
   roomCode: string;
-  lanIPs: string[];
   playerList: { id: string; name: string }[];
   // Join screen
   joinStatus: string;
@@ -33,7 +32,6 @@ export function createMenuState(): MenuState {
   return {
     screen: 'main',
     roomCode: '',
-    lanIPs: [],
     playerList: [],
     joinStatus: '',
     animTime: 0,
@@ -44,7 +42,6 @@ export function createMenuState(): MenuState {
 
 // DOM overlay for text inputs (join screen)
 let inputOverlay: HTMLDivElement | null = null;
-let ipInput: HTMLInputElement | null = null;
 let roomInput: HTMLInputElement | null = null;
 let nameInput: HTMLInputElement | null = null;
 
@@ -72,17 +69,6 @@ export function showJoinInputs(): void {
     width: 100%; box-sizing: border-box;
   `;
 
-  const defaultHost = window.location.hostname || 'localhost';
-
-  ipInput = document.createElement('input');
-  ipInput.type = 'text';
-  ipInput.placeholder = 'Server IP';
-  ipInput.value = defaultHost;
-  ipInput.style.cssText = inputStyle;
-  ipInput.setAttribute('autocomplete', 'off');
-  ipInput.setAttribute('autocorrect', 'off');
-  ipInput.setAttribute('autocapitalize', 'off');
-
   roomInput = document.createElement('input');
   roomInput.type = 'text';
   roomInput.placeholder = 'Room Code';
@@ -104,7 +90,6 @@ export function showJoinInputs(): void {
   // Shift inputs above the connect button area for mobile
   form.style.marginTop = '-100px';
 
-  form.appendChild(ipInput);
   form.appendChild(roomInput);
   form.appendChild(nameInput);
   inputOverlay.appendChild(form);
@@ -115,15 +100,13 @@ export function hideJoinInputs(): void {
   if (inputOverlay) {
     inputOverlay.remove();
     inputOverlay = null;
-    ipInput = null;
     roomInput = null;
     nameInput = null;
   }
 }
 
-export function getJoinInputValues(): { ip: string; room: string; name: string } {
+export function getJoinInputValues(): { room: string; name: string } {
   return {
-    ip: ipInput?.value.trim() || 'localhost',
     room: (roomInput?.value.trim() || '').toUpperCase(),
     name: nameInput?.value.trim() || 'Player',
   };
@@ -312,16 +295,6 @@ function renderHostScreen(ctx: CanvasRenderingContext2D, state: MenuState, scree
   ctx.fillText(state.roomCode || '----', 0, 0);
   ctx.restore();
 
-  // LAN IPs
-  if (state.lanIPs.length > 0) {
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = `${Math.min(13, screenW * 0.032)}px sans-serif`;
-    ctx.fillText('LAN IP', cx, screenH * 0.33);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = `${Math.min(16, screenW * 0.04)}px monospace`;
-    ctx.fillText(state.lanIPs[0] + ':3001', cx, screenH * 0.37);
-  }
-
   // Player list
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   ctx.font = `bold ${Math.min(14, screenW * 0.035)}px sans-serif`;
@@ -365,7 +338,7 @@ function renderJoinScreen(ctx: CanvasRenderingContext2D, state: MenuState, scree
   // Instructions
   ctx.fillStyle = 'rgba(255,255,255,0.25)';
   ctx.font = `${Math.min(14, screenW * 0.035)}px sans-serif`;
-  ctx.fillText('Enter the host details below', cx, screenH * 0.14);
+  ctx.fillText('Enter room code to join', cx, screenH * 0.14);
 
   // Status
   if (state.joinStatus) {

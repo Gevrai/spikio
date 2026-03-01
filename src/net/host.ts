@@ -1,3 +1,5 @@
+import Peer from 'peerjs';
+import type { DataConnection } from 'peerjs';
 import { GameWorld } from '../game/world.ts';
 import { WORLD_W, WORLD_H, PLAYER_COLORS, vec2Dist, vec2Norm, vec2Sub } from '../game/types.ts';
 import type { GameMode } from '../game/types.ts';
@@ -5,11 +7,11 @@ import type { Player } from '../game/player.ts';
 import type { Bit } from '../game/bits.ts';
 import type {
   SerializedPlayer, SerializedBit, ClientMessage,
-  ServerMessage, RelayRoomCreated, RelayClientConnected, RelayClientDisconnected,
+  ServerMessage,
 } from './protocol.ts';
 
 function generateRoomCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   let code = '';
   for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
@@ -29,10 +31,10 @@ interface BotState {
 export class GameHost {
   world: GameWorld;
   roomCode: string;
-  lanIPs: string[] = [];
   gameMode: GameMode;
 
-  private ws: WebSocket | null = null;
+  private peer: Peer | null = null;
+  private connections = new Map<string, DataConnection>();
   private remotePlayers = new Map<string, RemotePlayer>();
   private hostPlayer: Player;
   private hostPlayerId: string;
@@ -74,71 +76,55 @@ export class GameHost {
     return this.connected;
   }
 
-  connect(wsUrl: string): void {
-    const url = `${wsUrl}?role=host&room=${this.roomCode}`;
-    this.ws = new WebSocket(url);
+  connect(): void {
+    const peerId = 'spikio-' + this.roomCode.toLowerCase();
+    this.peer = new Peer(peerId);
 
-    this.ws.onopen = () => {
+    this.peer.on('open', () => {
       this.connected = true;
       this.onConnected?.();
-    };
+    });
 
-    this.ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data as string);
-        this.handleMessage(msg);
-      } catch { /* ignore parse errors */ }
-    };
+    this.peer.on('connection', (conn) => {
+      this.connections.set(conn.peer, conn);
 
-    this.ws.onclose = () => {
+      conn.on('data', (data) => {
+        const msg = data as ClientMessage;
+        const clientId = conn.peer;
+
+        if (msg.type === 'join') {
+          this.addRemotePlayer(clientId, msg.name);
+          return;
+        }
+
+        if (msg.type === 'input') {
+          const remote = this.remotePlayers.get(clientId);
+          if (!remote) return;
+
+          if (msg.launch && msg.aim) {
+            const angle = msg.aim.angle;
+            remote.pendingLaunch = {
+              dirX: Math.cos(angle),
+              dirY: Math.sin(angle),
+              power: msg.aim.power,
+            };
+          }
+        }
+      });
+
+      conn.on('close', () => {
+        this.connections.delete(conn.peer);
+        this.removeRemotePlayer(conn.peer);
+      });
+    });
+
+    this.peer.on('error', (err) => {
+      this.onError?.(err.message);
+    });
+
+    this.peer.on('disconnected', () => {
       this.connected = false;
-    };
-
-    this.ws.onerror = () => {
-      this.onError?.('WebSocket connection failed');
-    };
-  }
-
-  private handleMessage(msg: ClientMessage | RelayRoomCreated | RelayClientConnected | RelayClientDisconnected): void {
-    if (msg.type === 'room-created') {
-      const relay = msg as RelayRoomCreated;
-      this.lanIPs = relay.ips;
-      return;
-    }
-
-    if (msg.type === 'client-connected') {
-      // Client socket connected, wait for join message
-      return;
-    }
-
-    if (msg.type === 'client-disconnected') {
-      const relay = msg as RelayClientDisconnected;
-      this.removeRemotePlayer(relay.clientId);
-      return;
-    }
-
-    const clientMsg = msg as ClientMessage & { _clientId?: string };
-    const clientId = clientMsg._clientId;
-    if (!clientId) return;
-
-    if (clientMsg.type === 'join') {
-      this.addRemotePlayer(clientId, clientMsg.name);
-      return;
-    }
-
-    if (clientMsg.type === 'input') {
-      const remote = this.remotePlayers.get(clientId);
-      if (!remote) return;
-
-      if (clientMsg.launch && clientMsg.aim) {
-        const angle = clientMsg.aim.angle;
-        remote.pendingLaunch = {
-          dirX: Math.cos(angle),
-          dirY: Math.sin(angle),
-          power: clientMsg.aim.power,
-        };
-      }
-    }
+    });
   }
 
   private addRemotePlayer(clientId: string, name: string): void {
@@ -361,7 +347,7 @@ export class GameHost {
   }
 
   private broadcastState(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.connections.size === 0) return;
     const msg: ServerMessage = {
       type: 'state',
       players: this.serializePlayers(),
@@ -372,21 +358,20 @@ export class GameHost {
   }
 
   private broadcast(msg: ServerMessage): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify(msg));
+    for (const conn of this.connections.values()) {
+      conn.send(msg);
+    }
   }
 
   private sendToClient(clientId: string, msg: ServerMessage): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const envelope = { ...msg, _targetClientId: clientId };
-    this.ws.send(JSON.stringify(envelope));
+    const conn = this.connections.get(clientId);
+    if (conn) conn.send(msg);
   }
 
   disconnect(): void {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.peer?.destroy();
+    this.peer = null;
+    this.connections.clear();
     this.connected = false;
   }
 }

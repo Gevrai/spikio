@@ -3,8 +3,8 @@ import type { GameMode } from '../game/types.ts';
 
 // Client → Host
 export type ClientMessage =
-  | { type: 'input'; aim: { aiming: boolean; angle: number; power: number } | null; launch: boolean; _clientId?: string }
-  | { type: 'join'; name: string; _clientId?: string };
+  | { type: 'input'; aim: { aiming: boolean; angle: number; power: number } | null; launch: boolean }
+  | { type: 'join'; name: string };
 
 // Host → Client
 export type ServerMessage =
@@ -33,26 +33,4 @@ export interface SerializedBit {
   y: number;
   color: string;
   scattered: boolean;
-}
-
-// Internal WS relay messages (not game protocol)
-export interface RelayConnected {
-  type: 'connected';
-  clientId: string;
-}
-
-export interface RelayRoomCreated {
-  type: 'room-created';
-  room: string;
-  ips: string[];
-}
-
-export interface RelayClientConnected {
-  type: 'client-connected';
-  clientId: string;
-}
-
-export interface RelayClientDisconnected {
-  type: 'client-disconnected';
-  clientId: string;
 }

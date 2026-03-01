@@ -1,3 +1,5 @@
+import Peer from 'peerjs';
+import type { DataConnection } from 'peerjs';
 import { PLAYER_COLORS, WORLD_W, WORLD_H } from '../game/types.ts';
 import type { GameMode } from '../game/types.ts';
 import type { AimState } from '../game/types.ts';
@@ -37,7 +39,8 @@ function playerRadius(bitCount: number): number {
 }
 
 export class GameClient {
-  private ws: WebSocket | null = null;
+  private peer: Peer | null = null;
+  private conn: DataConnection | null = null;
   private _playerId: string | null = null;
   private _worldW = WORLD_W;
   private _worldH = WORLD_H;
@@ -72,54 +75,59 @@ export class GameClient {
   get gameMode(): GameMode { return this._gameMode; }
   get modeState(): SerializedModeState | null { return this._modeState; }
 
-  connect(wsUrl: string, roomCode: string, playerName: string): void {
-    const url = `${wsUrl}?role=client&room=${roomCode.toUpperCase()}`;
-    this.ws = new WebSocket(url);
+  connect(roomCode: string, playerName: string): void {
+    this.peer = new Peer();
 
-    this.ws.onopen = () => {
-      this._connected = true;
-      // Send join message
-      const joinMsg: ClientMessage = { type: 'join', name: playerName };
-      this.ws!.send(JSON.stringify(joinMsg));
-      this.onConnected?.();
-    };
+    this.peer.on('open', () => {
+      const hostId = 'spikio-' + roomCode.toLowerCase();
+      const connection = this.peer!.connect(hostId);
+      this.conn = connection;
 
-    this.ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data as string) as ServerMessage & { type: string; clientId?: string };
-        this.handleMessage(msg);
-      } catch { /* ignore */ }
-    };
+      connection.on('open', () => {
+        this._connected = true;
+        const joinMsg: ClientMessage = { type: 'join', name: playerName };
+        connection.send(joinMsg);
+        this.onConnected?.();
+      });
 
-    this.ws.onclose = (ev) => {
-      this._connected = false;
-      this._welcomed = false;
-      this.onDisconnect?.(ev.reason || 'Connection closed');
-    };
+      connection.on('data', (data) => {
+        this.handleMessage(data as ServerMessage);
+      });
 
-    this.ws.onerror = () => {
-      this.onError?.('Connection failed');
-    };
+      connection.on('close', () => {
+        this._connected = false;
+        this._welcomed = false;
+        this.conn = null;
+        this.peer?.destroy();
+        this.peer = null;
+        this.onDisconnect?.('Connection closed');
+      });
+
+      connection.on('error', (err) => {
+        this.onError?.(err.message);
+      });
+    });
+
+    this.peer.on('error', (err) => {
+      this.onError?.(err.message);
+      this.disconnect();
+    });
   }
 
-  private handleMessage(msg: ServerMessage & { type: string }): void {
+  private handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
       case 'welcome': {
-        if (msg.type !== 'welcome') break;
-        const w = msg as ServerMessage & { type: 'welcome' };
-        this._playerId = w.playerId;
-        this._worldW = w.worldW;
-        this._worldH = w.worldH;
-        this._gameMode = w.mode;
+        this._playerId = msg.playerId;
+        this._worldW = msg.worldW;
+        this._worldH = msg.worldH;
+        this._gameMode = msg.mode;
         this._welcomed = true;
         this.onWelcome?.();
         break;
       }
       case 'state': {
-        if (msg.type !== 'state') break;
-        const s = msg as ServerMessage & { type: 'state' };
-        this.applyState(s.players, s.bits);
-        this._modeState = s.modeState;
+        this.applyState(msg.players, msg.bits);
+        this._modeState = msg.modeState;
         break;
       }
     }
@@ -194,7 +202,7 @@ export class GameClient {
   }
 
   private sendInput(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this._welcomed) return;
+    if (!this.conn?.open || !this._welcomed) return;
 
     const msg: ClientMessage = {
       type: 'input',
@@ -206,7 +214,7 @@ export class GameClient {
       launch: this.pendingLaunch,
     };
 
-    this.ws.send(JSON.stringify(msg));
+    this.conn.send(msg);
     this.pendingLaunch = false;
     this.launchAim = null;
   }
@@ -233,10 +241,9 @@ export class GameClient {
   }
 
   disconnect(): void {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.peer?.destroy();
+    this.conn = null;
+    this.peer = null;
     this._connected = false;
     this._welcomed = false;
   }

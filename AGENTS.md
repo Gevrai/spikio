@@ -9,7 +9,6 @@ This file documents the project setup and conventions so that any agent can quic
 - **Language:** TypeScript (strict mode)
 - **Entry point:** `src/main.ts`
 - **Dev server:** `npm run dev` (Vite dev server, default port 5173, bound to 0.0.0.0)
-- **WebSocket server:** `npm run server` (standalone relay server on port 3001)
 - **Build:** `npm run build` (outputs to `dist/`)
 
 ## Directory Structure
@@ -18,15 +17,13 @@ src/
   main.ts          — App entry, screen management, game modes (solo/host/client)
   engine/          — Game loop, canvas, input
   game/            — Game entities and logic
-  net/             — Networking (WebSocket-based LAN multiplayer)
+  net/             — Networking (PeerJS P2P multiplayer)
     protocol.ts    — Shared message types
     host.ts        — GameHost (authoritative game in host browser)
     client.ts      — GameClient (receives state, sends input)
   ui/              — Menu, HUD, renderer
     menu.ts        — Canvas-based menu system
   audio/           — Sound effects
-server/
-  ws-server.ts     — Standalone WebSocket relay server (room-based)
 ```
 
 ## Key Conventions
@@ -34,23 +31,21 @@ server/
 - Mobile-first: portrait mode, touch controls, fullscreen
 - Game world has fixed dimensions; camera follows local player
 - Host player runs authoritative game server in-browser
-- Clients connect via WebSocket relay server for LAN multiplayer
+- Clients connect via PeerJS (WebRTC P2P) for multiplayer
 
 ## Development Commands
 ```bash
 npm install        # Install dependencies
 npm run dev        # Start Vite dev server (bound to 0.0.0.0 for LAN access)
-npm run server     # Start WebSocket relay server on port 3001
-npm run dev:all    # Start both Vite and WS server concurrently
 npm run build      # Production build
 ```
 
 ## Multiplayer Architecture
-- **WebSocket relay server** (`server/ws-server.ts`): Runs on port 3001, manages rooms. Host sends state → relay broadcasts to clients. Client sends input → relay forwards to host.
+- **PeerJS P2P**: No server needed. Host creates a PeerJS peer with ID `spikio-{roomCode}`, clients connect directly via WebRTC DataChannel. PeerJS cloud handles signaling/STUN.
 - **Host browser** runs the authoritative GameWorld at 60Hz, broadcasts state at 20Hz.
-- **Client browser** sends input at 20Hz, interpolates between received states for smooth rendering.
+- **Client browser** sends input at 20Hz, interpolates between received states.
 - Room codes are 4-character alphanumeric strings.
-- For LAN play, all devices must be on the same network. The host screen shows the LAN IP and room code.
+- Deployed to GitHub Pages — zero server infrastructure required.
 
 ## Validation
 - **Always run `npm run build` after making changes** to verify there are no TypeScript or build errors before considering work complete.
@@ -59,5 +54,6 @@ npm run build      # Production build
 - Canvas scales to device pixel ratio for crisp rendering
 - Touch input is the primary control method
 - The game must work on mobile browsers (Chrome/Safari)
-- WebSocket relay server is a separate Node.js process (not a Vite plugin)
+- PeerJS enables serverless P2P multiplayer via WebRTC
+- Game is deployable to GitHub Pages with no backend
 - All changes affecting setup (new deps, config changes, new scripts) MUST be documented here

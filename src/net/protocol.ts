@@ -9,9 +9,11 @@ export type ClientMessage =
 // Host → Client
 export type ServerMessage =
   | { type: 'state'; players: SerializedPlayer[]; bits: SerializedBit[]; modeState: SerializedModeState }
-  | { type: 'welcome'; playerId: string; worldW: number; worldH: number; mode: GameMode }
+  | { type: 'welcome'; playerId: string; worldW: number; worldH: number; mode: GameMode; scatteredBits?: SerializedScatteredBit[] }
   | { type: 'player-joined'; id: string; name: string }
-  | { type: 'player-left'; id: string };
+  | { type: 'player-left'; id: string }
+  | { type: 'scatter'; x: number; y: number; count: number; seed: number; startId: number }
+  | { type: 'scatter_remove'; ids: number[] };
 
 export interface SerializedPlayer {
   id: string;
@@ -33,4 +35,14 @@ export interface SerializedBit {
   y: number;
   color: string;
   scattered: boolean;
+}
+
+export interface SerializedScatteredBit {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  color: string;
 }

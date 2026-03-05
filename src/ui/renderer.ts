@@ -165,6 +165,99 @@ export function renderBit(ctx: CanvasRenderingContext2D, bit: Bit, camera: Camer
   }
 }
 
+// --- Batched bit rendering ---
+interface BitScreenData {
+  sx: number; sy: number; pulseSize: number; scattered: boolean; fade: number;
+}
+
+function renderBitsBatched(ctx: CanvasRenderingContext2D, bits: Bit[], camera: Camera): void {
+  const sw = camera.screenW;
+  const sh = camera.screenH;
+  const cx = sw / 2;
+  const cy = sh / 2;
+  const glowDistSq = 400 * 400;
+
+  // Bucket by color
+  const colorBuckets = new Map<string, BitScreenData[]>();
+  const scatteredBuckets = new Map<string, BitScreenData[]>();
+  const sparkleBits: BitScreenData[] = [];
+
+  for (let i = 0; i < bits.length; i++) {
+    const bit = bits[i];
+    const s = camera.worldToScreen(bit.position.x, bit.position.y);
+    if (s.x < -10 || s.x > sw + 10 || s.y < -10 || s.y > sh + 10) continue;
+
+    const pulseSize = 3 + Math.sin(bit.age * 4 + bit.id) * 0.8;
+    const data: BitScreenData = {
+      sx: s.x, sy: s.y, pulseSize,
+      scattered: bit.scattered,
+      fade: bit.scattered ? Math.max(0, 1 - bit.age / bit.lifetime) : 0,
+    };
+
+    // Core bucket
+    let bucket = colorBuckets.get(bit.color);
+    if (!bucket) { bucket = []; colorBuckets.set(bit.color, bucket); }
+    bucket.push(data);
+
+    // Glow bucket: only for scattered bits within distance and not near edges
+    if (bit.scattered) {
+      const dx = s.x - cx;
+      const dy = s.y - cy;
+      if (dx * dx + dy * dy < glowDistSq) {
+        let glowBucket = scatteredBuckets.get(bit.color);
+        if (!glowBucket) { glowBucket = []; scatteredBuckets.set(bit.color, glowBucket); }
+        glowBucket.push(data);
+      }
+      sparkleBits.push(data);
+    } else {
+      // Non-scattered: always draw glow (skip near edges like original)
+      const em = 60;
+      if (s.x > em && s.x < sw - em && s.y > em && s.y < sh - em) {
+        let glowBucket = scatteredBuckets.get(bit.color);
+        if (!glowBucket) { glowBucket = []; scatteredBuckets.set(bit.color, glowBucket); }
+        glowBucket.push(data);
+      }
+    }
+  }
+
+  // Pass 1: Glow
+  ctx.globalAlpha = 0.19; // roughly '30' hex = 48/255 ≈ 0.19
+  for (const [color, bucket] of scatteredBuckets) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (const d of bucket) {
+      ctx.moveTo(d.sx + d.pulseSize + 3, d.sy);
+      ctx.arc(d.sx, d.sy, d.pulseSize + 3, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Pass 2: Core fill
+  for (const [color, bucket] of colorBuckets) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (const d of bucket) {
+      ctx.moveTo(d.sx + d.pulseSize, d.sy);
+      ctx.arc(d.sx, d.sy, d.pulseSize, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+
+  // Pass 3: Sparkle (white overlay on scattered bits)
+  if (sparkleBits.length > 0) {
+    // Group by approximate fade to minimize globalAlpha changes
+    ctx.fillStyle = '#fff';
+    for (const d of sparkleBits) {
+      ctx.globalAlpha = d.fade;
+      ctx.beginPath();
+      ctx.arc(d.sx, d.sy, d.pulseSize + 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 export function renderPlayer(
   ctx: CanvasRenderingContext2D,
   player: Player,
@@ -421,10 +514,8 @@ export function renderWorld(
 
   renderWorldBoundary(ctx, camera);
 
-  // Bits
-  for (const bit of world.bitsManager.bits) {
-    renderBit(ctx, bit, camera);
-  }
+  // Bits (batched by color)
+  renderBitsBatched(ctx, world.bitsManager.bits, camera);
 
   // Players
   const activeIds = new Set<string>();

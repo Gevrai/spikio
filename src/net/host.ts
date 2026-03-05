@@ -5,6 +5,7 @@ import { WORLD_W, WORLD_H, PLAYER_COLORS, vec2Dist, vec2Norm, vec2Sub } from '..
 import type { GameMode } from '../game/types.ts';
 import type { Player } from '../game/player.ts';
 import type { Bit } from '../game/bits.ts';
+import { getNextBitId } from '../game/bits.ts';
 import type {
   SerializedPlayer, SerializedBit, ClientMessage,
   ServerMessage,
@@ -48,6 +49,9 @@ export class GameHost {
   onConnected: (() => void) | null = null;
   onError: ((msg: string) => void) | null = null;
 
+  private _scatterSeed = 1;
+  private _removedScatteredIds: number[] = [];
+
   constructor(hostName: string, gameMode: GameMode = 'freeplay') {
     this.roomCode = generateRoomCode();
     this.gameMode = gameMode;
@@ -60,6 +64,19 @@ export class GameHost {
       this.world.addPlayer(name);
       this.botStates.set(name, { aimTimer: 1 + Math.random() * 2 });
     }
+
+    // Wrap scatterBits to broadcast scatter events to clients
+    const origScatter = this.world.bitsManager.scatterBits.bind(this.world.bitsManager);
+    this.world.bitsManager.scatterBits = (position, count, _seed?) => {
+      const seed = this._scatterSeed++;
+      const startId = getNextBitId();
+      const actualCount = origScatter(position, count, seed);
+      if (this.connections.size > 0) {
+        const msg: ServerMessage = { type: 'scatter', x: position.x, y: position.y, count: actualCount, seed, startId };
+        this.broadcast(msg);
+      }
+      return actualCount;
+    };
 
     this.updatePlayerList();
   }
@@ -134,13 +151,25 @@ export class GameHost {
     const remote: RemotePlayer = { clientId, playerId, name, pendingLaunch: null };
     this.remotePlayers.set(clientId, remote);
 
-    // Send welcome
+    // Send welcome with current scattered bits snapshot
+    const scatteredBits = this.world.bitsManager.bits
+      .filter(b => b.scattered)
+      .map(b => ({
+        id: b.id,
+        x: Math.round(b.position.x * 10) / 10,
+        y: Math.round(b.position.y * 10) / 10,
+        vx: Math.round(b.velocity.x * 10) / 10,
+        vy: Math.round(b.velocity.y * 10) / 10,
+        age: Math.round(b.age * 100) / 100,
+        color: b.color,
+      }));
     const welcome: ServerMessage = {
       type: 'welcome',
       playerId,
       worldW: WORLD_W,
       worldH: WORLD_H,
       mode: this.gameMode,
+      scatteredBits,
     };
     this.sendToClient(clientId, welcome);
 
@@ -211,13 +240,38 @@ export class GameHost {
     // Bot AI
     this.updateBotAI(dt);
 
+    // Snapshot scattered bit IDs before update
+    const scatteredBefore = new Set<number>();
+    for (const b of this.world.bitsManager.bits) {
+      if (b.scattered) scatteredBefore.add(b.id);
+    }
+
     // World tick
     this.world.update(dt);
+
+    // Detect removed scattered bits
+    if (this.connections.size > 0 && scatteredBefore.size > 0) {
+      const scatteredAfter = new Set<number>();
+      for (const b of this.world.bitsManager.bits) {
+        if (b.scattered) scatteredAfter.add(b.id);
+      }
+      for (const id of scatteredBefore) {
+        if (!scatteredAfter.has(id)) {
+          this._removedScatteredIds.push(id);
+        }
+      }
+    }
 
     // Broadcast state at 20Hz (every 3rd tick at 60Hz)
     this.tickCount++;
     if (this.tickCount % 3 === 0) {
       this.broadcastState();
+    }
+
+    // Broadcast scatter removals every 2 ticks when non-empty
+    if (this.tickCount % 2 === 0 && this._removedScatteredIds.length > 0) {
+      this.broadcast({ type: 'scatter_remove', ids: this._removedScatteredIds });
+      this._removedScatteredIds = [];
     }
   }
 
@@ -329,13 +383,19 @@ export class GameHost {
   }
 
   private serializeBits(): SerializedBit[] {
-    return this.world.bitsManager.bits.map(b => ({
-      id: b.id,
-      x: Math.round(b.position.x),
-      y: Math.round(b.position.y),
-      color: b.color,
-      scattered: b.scattered,
-    }));
+    // Only send arena (non-scattered) bits; scattered bits are synced via scatter events
+    const result: SerializedBit[] = [];
+    for (const b of this.world.bitsManager.bits) {
+      if (b.scattered) continue;
+      result.push({
+        id: b.id,
+        x: Math.round(b.position.x),
+        y: Math.round(b.position.y),
+        color: b.color,
+        scattered: false,
+      });
+    }
+    return result;
   }
 
   private getPlayerName(id: string): string {

@@ -1,11 +1,14 @@
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
-import { PLAYER_COLORS, WORLD_W, WORLD_H } from '../game/types.ts';
+import { PLAYER_COLORS, WORLD_W, WORLD_H, SCATTER_LIFETIME } from '../game/types.ts';
 import type { GameMode } from '../game/types.ts';
 import type { AimState } from '../game/types.ts';
-import type { SerializedPlayer, SerializedBit, ServerMessage } from './protocol.ts';
+import type { SerializedPlayer, SerializedBit, SerializedScatteredBit, ServerMessage } from './protocol.ts';
 import type { ClientMessage } from './protocol.ts';
 import type { SerializedModeState } from '../game/modes/types.ts';
+import { lcgRandom } from '../game/bits.ts';
+
+const FRICTION = 0.98;
 
 interface InterpolatedPlayer {
   id: string;
@@ -34,6 +37,17 @@ interface InterpolatedBit {
   scattered: boolean;
 }
 
+interface LocalScatteredBit {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  color: string;
+  age: number;
+  lifetime: number;
+}
+
 function playerRadius(bitCount: number): number {
   return 15 + Math.sqrt(bitCount) * 3;
 }
@@ -52,6 +66,7 @@ export class GameClient {
   // State interpolation
   private currentPlayers: InterpolatedPlayer[] = [];
   private currentBits: InterpolatedBit[] = [];
+  private localScattered: LocalScatteredBit[] = [];
   private lastStateTime = 0;
   private stateInterval = 1 / 20; // 50ms expected interval
   private interpAlpha = 0;
@@ -122,12 +137,24 @@ export class GameClient {
         this._worldH = msg.worldH;
         this._gameMode = msg.mode;
         this._welcomed = true;
+        if (msg.scatteredBits) {
+          this.applyScatteredSnapshot(msg.scatteredBits);
+        }
         this.onWelcome?.();
         break;
       }
       case 'state': {
         this.applyState(msg.players, msg.bits);
         this._modeState = msg.modeState;
+        break;
+      }
+      case 'scatter': {
+        this.spawnLocalScatter(msg.x, msg.y, msg.count, msg.seed, msg.startId);
+        break;
+      }
+      case 'scatter_remove': {
+        const ids = new Set(msg.ids);
+        this.localScattered = this.localScattered.filter(b => !ids.has(b.id));
         break;
       }
     }
@@ -165,7 +192,7 @@ export class GameClient {
     }
     this.currentPlayers = newPlayers;
 
-    // Update bits
+    // Update bits (only arena bits from server; scattered handled locally)
     this.currentBits = bits.map(b => ({
       id: b.id,
       x: b.x,
@@ -175,11 +202,63 @@ export class GameClient {
     }));
   }
 
+  private applyScatteredSnapshot(bits: SerializedScatteredBit[]): void {
+    this.localScattered.length = 0;
+    for (const b of bits) {
+      this.localScattered.push({
+        id: b.id,
+        x: b.x,
+        y: b.y,
+        vx: b.vx,
+        vy: b.vy,
+        color: b.color,
+        age: b.age,
+        lifetime: SCATTER_LIFETIME,
+      });
+    }
+  }
+
+  private spawnLocalScatter(px: number, py: number, count: number, seed: number, startId: number): void {
+    const rng = lcgRandom(seed);
+    for (let i = 0; i < count; i++) {
+      const angle = rng() * Math.PI * 2;
+      const speed = 80 + rng() * 200;
+      const colorIdx = Math.floor(rng() * PLAYER_COLORS.length);
+      this.localScattered.push({
+        id: startId + i,
+        x: px + Math.cos(angle) * 5,
+        y: py + Math.sin(angle) * 5,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: PLAYER_COLORS[colorIdx],
+        age: 0,
+        lifetime: SCATTER_LIFETIME,
+      });
+    }
+  }
+
   update(dt: number): void {
     // Advance interpolation
     if (this.stateInterval > 0) {
       this.interpAlpha = Math.min(1, this.interpAlpha + dt / this.stateInterval);
     }
+
+    // Simulate local scattered bits
+    let w = 0;
+    for (let i = 0; i < this.localScattered.length; i++) {
+      const b = this.localScattered[i];
+      b.age += dt;
+      if (b.age > b.lifetime) continue;
+      const frictionDecay = Math.pow(FRICTION, dt * 60);
+      b.vx *= frictionDecay;
+      b.vy *= frictionDecay;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.x = Math.max(5, Math.min(WORLD_W - 5, b.x));
+      b.y = Math.max(5, Math.min(WORLD_H - 5, b.y));
+      this.localScattered[w++] = b;
+    }
+    this.localScattered.length = w;
 
     // Throttled input sending (20Hz)
     const now = performance.now() / 1000;
@@ -231,7 +310,11 @@ export class GameClient {
   }
 
   getBits(): InterpolatedBit[] {
-    return this.currentBits;
+    // Merge arena bits from server with locally simulated scattered bits
+    const scattered: InterpolatedBit[] = this.localScattered.map(b => ({
+      id: b.id, x: b.x, y: b.y, color: b.color, scattered: true,
+    }));
+    return this.currentBits.concat(scattered);
   }
 
   getLocalPlayer(): InterpolatedPlayer | undefined {

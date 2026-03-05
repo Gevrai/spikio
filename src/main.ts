@@ -471,19 +471,42 @@ function renderClientWorld(
 
   renderWorldBoundary(ctx, camera);
 
-  // Bits
-  for (const b of client.getBits()) {
-    const s = camera.worldToScreen(b.x, b.y);
-    if (s.x < -10 || s.x > camera.screenW + 10 || s.y < -10 || s.y > camera.screenH + 10) continue;
-    const pulseSize = 3 + Math.sin(time * 4 + b.id) * 0.8;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, pulseSize + 3, 0, Math.PI * 2);
-    ctx.fillStyle = b.color + '30';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, pulseSize, 0, Math.PI * 2);
-    ctx.fillStyle = b.color;
-    ctx.fill();
+  // Bits (batched by color)
+  {
+    const clientBits = client.getBits();
+    const sw = camera.screenW;
+    const sh = camera.screenH;
+    const colorBuckets = new Map<string, { sx: number; sy: number; ps: number }[]>();
+    const glowBuckets = new Map<string, { sx: number; sy: number; ps: number }[]>();
+    for (const b of clientBits) {
+      const s = camera.worldToScreen(b.x, b.y);
+      if (s.x < -10 || s.x > sw + 10 || s.y < -10 || s.y > sh + 10) continue;
+      const ps = 3 + Math.sin(time * 4 + b.id) * 0.8;
+      const d = { sx: s.x, sy: s.y, ps };
+      let cb = colorBuckets.get(b.color);
+      if (!cb) { cb = []; colorBuckets.set(b.color, cb); }
+      cb.push(d);
+      const em = 60;
+      if (s.x > em && s.x < sw - em && s.y > em && s.y < sh - em) {
+        let gb = glowBuckets.get(b.color);
+        if (!gb) { gb = []; glowBuckets.set(b.color, gb); }
+        gb.push(d);
+      }
+    }
+    ctx.globalAlpha = 0.19;
+    for (const [color, bucket] of glowBuckets) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (const d of bucket) { ctx.moveTo(d.sx + d.ps + 3, d.sy); ctx.arc(d.sx, d.sy, d.ps + 3, 0, Math.PI * 2); }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (const [color, bucket] of colorBuckets) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (const d of bucket) { ctx.moveTo(d.sx + d.ps, d.sy); ctx.arc(d.sx, d.sy, d.ps, 0, Math.PI * 2); }
+      ctx.fill();
+    }
   }
 
   // Players
